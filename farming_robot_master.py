@@ -15,8 +15,8 @@ sys.path.append(ros_path)
 import vrep
 import numpy as np
 import math
-from readSensors import poseRobot
-
+from readSensors import gpsRobot,compassRobot,getDroneImage
+from simple_pid import PID
 
 # Connect to V-REP Server
 def checkConnectivity():
@@ -32,35 +32,6 @@ def checkConnectivity():
         sys.exit("Failed connecting to remote API server")
     return clientID
 
-# Get Drone Imagery
-def getDroneImage(clientID, height):
-    position = np.asarray([0,0,height])
-    
-    # Get Drone Handle
-    errorCode, droneHandle = vrep.simxGetObjectHandle(
-            clientID,'drone', vrep.simx_opmode_oneshot_wait)
-    
-    # Set Drone Height (in meters)
-    vrep.simxSetObjectPosition(clientID,
-                               droneHandle,-1,position,vrep.simx_opmode_oneshot_wait)
-
-    # Get Drone Camera Image (First Call)
-    errorDrone, resolution, droneImage = vrep.simxGetVisionSensorImage(
-        clientID, droneHandle,0, vrep.simx_opmode_streaming)
-    count = 0
-    while (vrep.simxGetConnectionId(clientID) != -1):
-    
-        # Read in drone camera image (Note operating mode changed to buffer)
-        errorDrone, resolution, droneImage = vrep.simxGetVisionSensorImage(
-                clientID, droneHandle, 0, vrep.simx_opmode_buffer)
-        count+=1
-        
-        # quit after 5 images read (first images may be empty)
-        if (errorDrone == vrep.simx_return_ok and count >= 5):
-            droneImage = np.array(droneImage,dtype=np.uint8)
-            droneImage.resize([resolution[1],resolution[0],3])
-            break
-    return resolution,droneImage
 
 # mouse callback function for robot to draw circles at clicked points
 def draw_circle(event,x,y,flags,param):
@@ -73,7 +44,7 @@ def draw_circle(event,x,y,flags,param):
         cv2.circle(droneImage,(x,y),5,(255,0,0),-1)
         mouseXRobot, mouseYRobot = x,y
         robotClicked = True
-        print("clicked robot")
+#        print("clicked robot")
     # following double clicks mark target
     elif event == cv2.EVENT_LBUTTONDBLCLK and robotClicked:
         cv2.circle(droneImage,(x,y),5,(0,255,0),-1)
@@ -81,21 +52,12 @@ def draw_circle(event,x,y,flags,param):
         # Draw a diagonal blue line with thickness of 5 px
         cv2.line(droneImage,(mouseXRobot,mouseYRobot),
                  (mouseXTarget,mouseYTarget),(0,0,255),5)
-        print("clicked target")
-#        positionRobot = np.array([[mouseXRobot],
-#                          [mouseYRobot]])
-#        positionTarget = np.array([[mouseXTarget],
-#                           [mouseYTarget]])
-#        [deltaX, deltaY] = (positionTarget-positionRobot)
-#
-#        angle = -math.atan2(deltaY,deltaX)*180/math.pi
-#        if angle < 0:
-#            angle += 360
-#        print("angle: " + str(angle))
+#        print("clicked target")
+#        
 #        
         
 
-clientID = checkConnectivity()
+clientID = checkConnectivity()      # Connect to V-Rep
 droneHeight = 10                    # Set Drone Height
 droneFOV = math.radians(85)         # degrees
 resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
@@ -108,6 +70,7 @@ centerY = resolution[1]/2
 # Calcualte ratio between pixels to distance in image
 pixDistRatio = resolution[0]/(2*droneHeight*math.tan(droneFOV/2))
 
+# Display Picture and click to draw circles and extract coordinate
 cv2.namedWindow('Drone Imagery')
 robotClicked = False
 cv2.setMouseCallback('Drone Imagery',draw_circle,[centerX,centerY])
@@ -116,35 +79,91 @@ while(1):
     if cv2.waitKey(20) & 0xFF == ord('q'):
         break
 
-# Convert Image Coordinates to Real World Distance Coordinates
-positionRobot = np.array([[mouseXRobot-centerX],
-                          [centerY-mouseYRobot]])/pixDistRatio
-positionTarget = np.array([[mouseXTarget-centerX],
-                           [centerY-mouseYTarget]])/pixDistRatio
-# Calculate Angle to Target (Using positive angles only)
-[deltaX, deltaY] = positionTarget-positionRobot
-angleTarget = math.atan2(deltaY,deltaX)*180/math.pi
-if angleTarget < 0:
-    angleTarget += 360
+# Position of target attained using GPS
+positionTarget = np.array([(mouseXTarget-centerX),
+                           (centerY-mouseYTarget)])/pixDistRatio
 
+# Calculate the angle from the robot to the target point    
+def robot2Target(positionTarget,clientID):
+    # Get position of robot
+    robotPosition = gpsRobot(clientID)
+    positionTarget = np.asarray(positionTarget)
+  
+    [deltaX, deltaY] = positionTarget-robotPosition
+    angleTarget = math.atan2(deltaY,deltaX)*180/math.pi
+    if angleTarget < 0:
+        angleTarget += 360
+    
+    # Calculate Distance to Target
+    dist2Target = math.sqrt((robotPosition[0]-positionTarget[0])**2+(robotPosition[1]-
+            positionTarget[1])**2)
+    
+    return dist2Target, angleTarget
 
-# Get Robot Angle and Angle from robot to target
-position, robotAngle = poseRobot() # Note real robot position would have GPS noise
+# Angle from heading angle of robot to target angle
+def angleDifference(currentAngle,targetAngle):
+    difference = targetAngle-currentAngle 
+    angleDifference = ((difference + 180) % 360 - 180)
+    return angleDifference
 
+def powerMotors(omega, forwardVelocity,clientID):
+    wheelBase = .267 # m
+    wheelRadius = .19 #m
+    leftMotorVel = (forwardVelocity-omega*wheelBase/2)/wheelRadius
+    rightMotorVel = (forwardVelocity+omega*wheelBase/2)/wheelRadius
+    # Get Motor Handles    
+    leftErrorCode, leftMotorHandle = vrep.simxGetObjectHandle(
+            clientID,"Pioneer_p3dx_leftMotor",vrep.simx_opmode_blocking )
+    rightErrorCode, rightMotorHandle = vrep.simxGetObjectHandle(
+            clientID,"Pioneer_p3dx_rightMotor",vrep.simx_opmode_blocking )
 
-print("Robot and Target Position")
-print(positionRobot) # Calculated using camera, not position above
-print(positionTarget)
+    # Set Motor Velocity
+    vrep.simxSetJointTargetVelocity(
+            clientID,leftMotorHandle,leftMotorVel,vrep.simx_opmode_streaming) 
+    vrep.simxSetJointTargetVelocity(
+            clientID,rightMotorHandle,rightMotorVel,vrep.simx_opmode_streaming)
+    
 
-print("Robot azimuth angle")
-print(robotAngle)
-
-print("Target Angle: " + str(angleTarget))
-
-
+#print("Angle to Target")
+dist2Target, angleTarget = robot2Target(positionTarget, clientID)
+robotAngle = compassRobot(clientID)
 print("Robot Angle Offset")
-difference = angleTarget-robotAngle 
-print((difference + 180) % 360 - 180)
+difference = angleDifference(robotAngle, angleTarget)
+print(difference)
+
+tolDist = 1
+
+pid = PID(1, 1, 1, setpoint=0)
+pid.sample_time = 0.1
+omega = math.radians(difference) 
+
+omegaTrack = []
+while(dist2Target > tolDist):
+    omegaTrack.append(omega)
+    control = pid(omega)    # apply PID to control input (omega)
+    if (abs(omega) > math.radians(10)):
+        forwardVelocity = 0
+        print("turning")
+    else:
+        forwardVelocity = 1
+        print("moving forward")
+        print(omega)
+        
+    powerMotors(omega,forwardVelocity,clientID) # send control input to motors
+    
+    # Recalculate Values
+    dist2Target, angleTarget = robot2Target(positionTarget, clientID)
+    robotAngle = compassRobot(clientID)
+    omega = math.radians(angleDifference(robotAngle, angleTarget))
+    
+    resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
+    droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
+    cv2.imshow('Drone Imagery',droneImage)
+    if cv2.waitKey(20) & 0xFF == ord('q'):
+        break
+    
+    
+
 
 
 input("Press Enter to continue...")

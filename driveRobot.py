@@ -28,7 +28,10 @@ def checkConnectivity():
         sys.exit("Failed connecting to remote API server")
     return clientID
 
-def powerMotors(leftMotorVel, rightMotorVel):
+def powerMotors(omega, forwardVelocity,clientID):
+    wheelBase = .267 # m
+    leftMotorVel = forwardVelocity-omega*wheelBase/2
+    rightMotorVel = forwardVelocity+omega*wheelBase/2
     # Get Motor Handles    
     leftErrorCode, leftMotorHandle = vrep.simxGetObjectHandle(
             clientID,"Pioneer_p3dx_leftMotor",vrep.simx_opmode_blocking )
@@ -40,10 +43,10 @@ def powerMotors(leftMotorVel, rightMotorVel):
             clientID,leftMotorHandle,leftMotorVel,vrep.simx_opmode_streaming) 
     vrep.simxSetJointTargetVelocity(
             clientID,rightMotorHandle,rightMotorVel,vrep.simx_opmode_streaming) 
-#def rotate2Angle():
-#    # do stuff
     
-global clientID
-clientID = checkConnectivity()
-powerMotors(0,0)
+
+def main():
+    global clientID
+    clientID = checkConnectivity()
+    powerMotors(0,0,clientID)
 
