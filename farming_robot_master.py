@@ -17,6 +17,7 @@ import numpy as np
 import math
 from readSensors import gpsRobot,compassRobot,getDroneImage
 from simple_pid import PID
+from multiprocessing import Process
 
 # Connect to V-REP Server
 def checkConnectivity():
@@ -34,55 +35,28 @@ def checkConnectivity():
 
 
 # mouse callback function for robot to draw circles at clicked points
-def draw_circle(event,x,y,flags,param):
-    global mouseXRobot, mouseYRobot
-    global mouseXTarget, mouseYTarget
-    global robotClicked, centerX, centerY
+def draw_circle(event,x,y,flags,droneImage):
+    global mouseXTargetList, mouseYTargetList
+#    global mouseXTarget, mouseYTarget
+#    global robotClicked, centerX, centerY
     
-    # first left double click is to mark robot
-    if event == cv2.EVENT_LBUTTONDBLCLK and not robotClicked:
+    # first left double click is to draw line to robot
+    if event == cv2.EVENT_LBUTTONDBLCLK:
+        # Draw circle at clicked point
         cv2.circle(droneImage,(x,y),5,(255,0,0),-1)
-        mouseXRobot, mouseYRobot = x,y
-        robotClicked = True
-#        print("clicked robot")
-    # following double clicks mark target
-    elif event == cv2.EVENT_LBUTTONDBLCLK and robotClicked:
-        cv2.circle(droneImage,(x,y),5,(0,255,0),-1)
-        mouseXTarget, mouseYTarget = x,y
-        # Draw a diagonal blue line with thickness of 5 px
-        cv2.line(droneImage,(mouseXRobot,mouseYRobot),
-                 (mouseXTarget,mouseYTarget),(0,0,255),5)
-#        print("clicked target")
-#        
-#        
+        targetX, targetY = x,y
         
-
-clientID = checkConnectivity()      # Connect to V-Rep
-droneHeight = 10                    # Set Drone Height
-droneFOV = math.radians(85)         # degrees
-resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
-droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
-
-# Moving Origin from top left to center of image
-centerX = resolution[0]/2
-centerY = resolution[1]/2
-
-# Calcualte ratio between pixels to distance in image
-pixDistRatio = resolution[0]/(2*droneHeight*math.tan(droneFOV/2))
-
-# Display Picture and click to draw circles and extract coordinate
-cv2.namedWindow('Drone Imagery')
-robotClicked = False
-cv2.setMouseCallback('Drone Imagery',draw_circle,[centerX,centerY])
-while(1):
-    cv2.imshow('Drone Imagery',droneImage)
-    if cv2.waitKey(20) & 0xFF == ord('q'):
-        break
-
-# Position of target attained using GPS
-positionTarget = np.array([(mouseXTarget-centerX),
-                           (centerY-mouseYTarget)])/pixDistRatio
-
+        # Add point to point list
+        mouseXTargetList.append(targetX)
+        mouseYTargetList.append(targetY)
+        
+        # Only draw line between target and previous point if more than 1 point
+        numTargets = len(mouseXTargetList)
+        if(numTargets>1):
+            cv2.line(droneImage,(targetX,targetY),
+                 (mouseXTargetList[numTargets-2],mouseYTargetList[numTargets-2]),
+                 (0,0,255),5)
+            
 # Calculate the angle from the robot to the target point    
 def robot2Target(positionTarget,clientID):
     # Get position of robot
@@ -122,52 +96,135 @@ def powerMotors(omega, forwardVelocity,clientID):
             clientID,leftMotorHandle,leftMotorVel,vrep.simx_opmode_streaming) 
     vrep.simxSetJointTargetVelocity(
             clientID,rightMotorHandle,rightMotorVel,vrep.simx_opmode_streaming)
-    
 
-#print("Angle to Target")
-dist2Target, angleTarget = robot2Target(positionTarget, clientID)
-robotAngle = compassRobot(clientID)
-print("Robot Angle Offset")
-difference = angleDifference(robotAngle, angleTarget)
-print(difference)
+#    while(1):
+#        print("Video Stream")
+#         # Show video Stream
+#        print(clientID,droneHeight)
+#        resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
+#        print("passed")
+#        droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
+#        cv2.imshow('Drone Imagery',droneImage)
+#    #        for i in range(numTargets):
+#    #            cv2.circle(droneImage,(mouseXTargetList[i],mouseYTargetList[i]),5,(255,0,0),-1)
+#        if cv2.waitKey(20) & 0xFF == ord('q'):  
+#            break
+#    
 
-tolDist = 1
-
-pid = PID(1, 1, 1, setpoint=0)
-pid.sample_time = 0.1
-omega = math.radians(difference) 
-
-omegaTrack = []
-while(dist2Target > tolDist):
-    omegaTrack.append(omega)
-    control = pid(omega)    # apply PID to control input (omega)
-    if (abs(omega) > math.radians(10)):
-        forwardVelocity = 0
-        print("turning")
-    else:
-        forwardVelocity = 1
-        print("moving forward")
-        print(omega)
-        
-    powerMotors(omega,forwardVelocity,clientID) # send control input to motors
-    
-    # Recalculate Values
-    dist2Target, angleTarget = robot2Target(positionTarget, clientID)
-    robotAngle = compassRobot(clientID)
-    omega = math.radians(angleDifference(robotAngle, angleTarget))
-    
+            
+def main():
+    clientID = checkConnectivity()      # Connect to V-Rep
+    droneHeight = 10                  # Set Drone Height
+    droneFOV = math.radians(85)         # degrees
     resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
     droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
-    cv2.imshow('Drone Imagery',droneImage)
-    if cv2.waitKey(20) & 0xFF == ord('q'):
-        break
+    
+    # Moving Origin from top left to center of image
+    centerX = resolution[0]/2
+    centerY = resolution[1]/2
+    
+    # Calcualte ratio between pixels to distance in image
+    pixDistRatio = resolution[0]/(2*droneHeight*math.tan(droneFOV/2))
+    
+    # Display Picture and click to draw circles and extract coordinate
+    cv2.namedWindow('Drone Imagery')
+    
+    # List of points with 
+    global mouseXTargetList, mouseYTargetList
+    mouseXTargetList = []
+    mouseYTargetList = []
+    
+    # Open window to select target locations
+    cv2.setMouseCallback('Drone Imagery',draw_circle,droneImage)
+    while(1):
+        cv2.imshow('Drone Imagery',droneImage)
+        if cv2.waitKey(20) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
+            break
+        
+    # Check how many targets were selected
+    numTargets = len(mouseXTargetList)
+    if (numTargets==0):
+        cv2.destroyAllWindows()
+        sys.exit("No Target Points Selected")
+        
+    # Position of target attained using GPS
+    targetIndex = 0
+    currentTargetX = mouseXTargetList[targetIndex]
+    currentTargetY = mouseYTargetList[targetIndex]    
+    positionTarget = np.asarray([currentTargetX-centerX,
+                                 centerY-currentTargetY])/pixDistRatio
     
     
-
-
-
-input("Press Enter to continue...")
-cv2.destroyAllWindows()
+    #print("Angle to Target")
+    dist2Target, angleTarget = robot2Target(positionTarget, clientID)
+    robotAngle = compassRobot(clientID)
+    #print("Robot Angle Offset")
+    difference = angleDifference(robotAngle, angleTarget)
+    #print(difference)
+    
+    # Target point reached when robot within this distance 
+    tolDist = .2
+    
+    pid = PID(5, 0, 1, setpoint=0)
+#    pid.sample_time = 0.05
+    omega = math.radians(difference) 
+    
+    # Drone Feed on seperate parallel process
+    #droneFeed = threading.Thread(target=droneVideoStream,args=(clientID,droneHeight))
+    #droneFeed.start()
+    #while(dist2Target > tolDist):
+    while(targetIndex < numTargets):
+        
+           # apply PID to control input (omega)
+        control = pid(-omega)    
+        print("Omega:" + str(omega))
+        print("control: " + str(control))
+        
+        # Spin in place if angle difference is large
+        if (abs(control) > math.radians(150)):
+            forwardVelocity = 0
+    #        print("turning")
+        else:
+            forwardVelocity = 1
+    
+        # send control input to motors
+        powerMotors(control,forwardVelocity,clientID) 
+        
+        # Find Position of current target
+        currentTargetX = mouseXTargetList[targetIndex]
+        currentTargetY = mouseYTargetList[targetIndex]    
+        positionTarget = np.asarray([currentTargetX-centerX,
+                                 centerY-currentTargetY])/pixDistRatio
+        # Recalculate Values
+        dist2Target, angleTarget = robot2Target(positionTarget, clientID)
+        robotAngle = compassRobot(clientID)
+        omega = math.radians(angleDifference(robotAngle, angleTarget))
+        
+        
+    #    # Show video Stream
+    #    resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
+    #    droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
+    #    cv2.imshow('Drone Imagery',droneImage)
+    #    if cv2.waitKey(20) & 0xFF == ord('q'):  
+    #        break
+        
+         # If reached target point, move to next target point
+        if (dist2Target < tolDist):
+            targetIndex += 1
+        
+        # Display Current Target
+        print("Moving to Target: " + str(targetIndex))
+            
+    # If arrived to last checkpoint, power off motors
+    powerMotors(0,0,clientID) 
+    print("Arrived to Last Checkpoint: " + str(targetIndex))
+    #droneFeed.join()
+    print("finished")
+    cv2.destroyAllWindows()
+    
+if __name__ == '__main__':
+    main()
 
 
 

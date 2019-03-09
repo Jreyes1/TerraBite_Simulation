@@ -137,7 +137,11 @@ def getDroneImage(clientID, height):
     return resolution,droneImage
     
 def main():
+#    getDroneImage(1,hei)
     position,orientation = gpsRobot()
     #orientation = 
     print("orientation relative to north:")
     print(math.degrees(orientation[2]))
+#if __name__ == "__main__":
+#    main()
+
