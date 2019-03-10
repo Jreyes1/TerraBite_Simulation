@@ -135,6 +135,7 @@ def getDroneImage(clientID, height):
             droneImage.resize([resolution[1],resolution[0],3])
             break
     return resolution,droneImage
+
     
 def main():
 #    getDroneImage(1,hei)

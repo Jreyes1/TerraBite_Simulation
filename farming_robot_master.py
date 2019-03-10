@@ -17,7 +17,6 @@ import numpy as np
 import math
 from readSensors import gpsRobot,compassRobot,getDroneImage
 from simple_pid import PID
-from multiprocessing import Process
 
 # Connect to V-REP Server
 def checkConnectivity():
@@ -33,14 +32,11 @@ def checkConnectivity():
         sys.exit("Failed connecting to remote API server")
     return clientID
 
-
 # mouse callback function for robot to draw circles at clicked points
 def draw_circle(event,x,y,flags,droneImage):
     global mouseXTargetList, mouseYTargetList
-#    global mouseXTarget, mouseYTarget
-#    global robotClicked, centerX, centerY
     
-    # first left double click is to draw line to robot
+    # Only register left double clicks as events
     if event == cv2.EVENT_LBUTTONDBLCLK:
         # Draw circle at clicked point
         cv2.circle(droneImage,(x,y),5,(255,0,0),-1)
@@ -63,6 +59,7 @@ def robot2Target(positionTarget,clientID):
     robotPosition = gpsRobot(clientID)
     positionTarget = np.asarray(positionTarget)
   
+    # Calculate angle from robot to target and correct for quadrant
     [deltaX, deltaY] = positionTarget-robotPosition
     angleTarget = math.atan2(deltaY,deltaX)*180/math.pi
     if angleTarget < 0:
@@ -83,8 +80,11 @@ def angleDifference(currentAngle,targetAngle):
 def powerMotors(omega, forwardVelocity,clientID):
     wheelBase = .267 # m
     wheelRadius = .19 #m
+    
+    # calculate wheel rotation velocities
     leftMotorVel = (forwardVelocity-omega*wheelBase/2)/wheelRadius
     rightMotorVel = (forwardVelocity+omega*wheelBase/2)/wheelRadius
+    
     # Get Motor Handles    
     leftErrorCode, leftMotorHandle = vrep.simxGetObjectHandle(
             clientID,"Pioneer_p3dx_leftMotor",vrep.simx_opmode_blocking )
@@ -97,29 +97,14 @@ def powerMotors(omega, forwardVelocity,clientID):
     vrep.simxSetJointTargetVelocity(
             clientID,rightMotorHandle,rightMotorVel,vrep.simx_opmode_streaming)
 
-#    while(1):
-#        print("Video Stream")
-#         # Show video Stream
-#        print(clientID,droneHeight)
-#        resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
-#        print("passed")
-#        droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
-#        cv2.imshow('Drone Imagery',droneImage)
-#    #        for i in range(numTargets):
-#    #            cv2.circle(droneImage,(mouseXTargetList[i],mouseYTargetList[i]),5,(255,0,0),-1)
-#        if cv2.waitKey(20) & 0xFF == ord('q'):  
-#            break
-#    
-
-            
 def main():
     clientID = checkConnectivity()      # Connect to V-Rep
-    droneHeight = 10                  # Set Drone Height
+    droneHeight = 10                    # Set Drone Height
     droneFOV = math.radians(85)         # degrees
     resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
     droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
     
-    # Moving Origin from top left to center of image
+    # Set oringin as center of image
     centerX = resolution[0]/2
     centerY = resolution[1]/2
     
@@ -129,7 +114,7 @@ def main():
     # Display Picture and click to draw circles and extract coordinate
     cv2.namedWindow('Drone Imagery')
     
-    # List of points with 
+    # List of target points
     global mouseXTargetList, mouseYTargetList
     mouseXTargetList = []
     mouseYTargetList = []
@@ -155,36 +140,28 @@ def main():
     positionTarget = np.asarray([currentTargetX-centerX,
                                  centerY-currentTargetY])/pixDistRatio
     
-    
-    #print("Angle to Target")
+    # Calculate Angle to Target
     dist2Target, angleTarget = robot2Target(positionTarget, clientID)
     robotAngle = compassRobot(clientID)
-    #print("Robot Angle Offset")
+    
+    # Angle between current heading of the robot and angle to target
     difference = angleDifference(robotAngle, angleTarget)
-    #print(difference)
     
     # Target point reached when robot within this distance 
-    tolDist = .2
+    tolDist = .2 # meters
     
     pid = PID(5, 0, 1, setpoint=0)
-#    pid.sample_time = 0.05
     omega = math.radians(difference) 
-    
-    # Drone Feed on seperate parallel process
-    #droneFeed = threading.Thread(target=droneVideoStream,args=(clientID,droneHeight))
-    #droneFeed.start()
-    #while(dist2Target > tolDist):
+  
+    # keep moving until reached last target
     while(targetIndex < numTargets):
-        
-           # apply PID to control input (omega)
+
+        # apply PID to control input (omega)
         control = pid(-omega)    
-        print("Omega:" + str(omega))
-        print("control: " + str(control))
         
         # Spin in place if angle difference is large
-        if (abs(control) > math.radians(150)):
+        if (abs(control) > math.radians(90)):
             forwardVelocity = 0
-    #        print("turning")
         else:
             forwardVelocity = 1
     
@@ -202,14 +179,13 @@ def main():
         omega = math.radians(angleDifference(robotAngle, angleTarget))
         
         
-    #    # Show video Stream
-    #    resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
-    #    droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
-    #    cv2.imshow('Drone Imagery',droneImage)
-    #    if cv2.waitKey(20) & 0xFF == ord('q'):  
-    #        break
-        
-         # If reached target point, move to next target point
+        # Show video Stream
+#        droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
+#        cv2.imshow('Drone Imagery',droneImage)
+#        if cv2.waitKey(20) & 0xFF == ord('q'):  
+#            break
+#        
+        # If reached target point, move to next target point
         if (dist2Target < tolDist):
             targetIndex += 1
         
@@ -219,8 +195,6 @@ def main():
     # If arrived to last checkpoint, power off motors
     powerMotors(0,0,clientID) 
     print("Arrived to Last Checkpoint: " + str(targetIndex))
-    #droneFeed.join()
-    print("finished")
     cv2.destroyAllWindows()
     
 if __name__ == '__main__':
