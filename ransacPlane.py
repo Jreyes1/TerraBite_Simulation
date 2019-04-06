@@ -52,32 +52,6 @@ def calcInliers(pointList, planeParameters):
     
     return (numInliers,inlierPoints)
 
-# refine parameters using conjugate gradient descent
-# def refinePlane(inlierPointList, planeParameters):
-    
-#     # number of points in list
-#     numPoints = len(inlierPointList)
-    
-#     # have to convert parameters from list to array form
-#     inlierPointList = np.asarray(inlierPointList)
-#     planeParameters = np.asarray(planeParameters)
-    
-#     A = inlierPointList[:,[0,1]]
-#     A1 = np.ones((numPoints,1))
-#     A = np.append(A,A1, axis=1)
-    
-#     B = inlierPointList[:,[2]]
-    
-# #    planeParameters = conjugateGradient(A,B,planeParameters)
-#     print("Initial Parameters from Ransac")
-#     print(np.asarray(planeParameters))
-
-#     planeParameters = np.linalg.lstsq(A,B,rcond=None)[0]
-#     print("Refining using Least Squares Solution")
-#     print(planeParameters)
-
-
-#     return planeParameters
     
 # Perform Adaptive RANSAC
 def ransacPlane(pointList):
@@ -117,7 +91,6 @@ def ransacPlane(pointList):
             inlierRatio = bestNumInliers/numPoints
             e = 1-inlierRatio
             N = math.log(1-p)/math.log(1-(1-e)**s)
-#            print(N)
         
         # increment sample count
         sampleCount += 1
@@ -126,28 +99,7 @@ def ransacPlane(pointList):
 
 
     
-    # print("Ransac Residual")
-    # residual = 0
-#    for i in range(len(bestInliers)):
-#        
-#        
-#        points = np.transpose(np.array(bestInliers[i]))     # transpose points
-#        residual+= bestPlane[0].dot(points)+bestPlane[1]    # ax+by+cz+d = residual
-#    print(residual)
-#        A = np.block([[points],[1]])
-#        residual += bestPlane.dot(point)
-#        print(residual)
-#        point = np.block([[np.transpose(bestInliers[i])],[1]])
-#        residual += bestPlane.dot(point)
-#        print(residual)
-        
-        
-        
-    
-    # refine plane equation using inliers
-#    bestPlane = refinePlane(bestInliers, bestPlane)
-            
-    # return refined plane parameters
+ 
     
             
 
