@@ -17,6 +17,7 @@ import vrep
 import numpy as np
 from ransacPlane import ransacPlane
 from readSensors import getDepthImage,cameraOrientation,compassRobot
+import Hough
 import math
 
 from mpl_toolkits.mplot3d import Axes3D
@@ -121,204 +122,174 @@ def rotateAxisAngle(axis,angle,point):
 
     return (R.dot(point))
     
-def main():
-    # Connect to V-Rep
-    clientID = checkConnectivity()  
-    auxPackets,resolution,rgbImage = getDepthImage(clientID)    
-    
-    showGroundPlane = True
-    showBinary = True
+#def main():
+# Connect to V-Rep
+clientID = checkConnectivity()  
+auxPackets,resolution,rgbImage = getDepthImage(clientID)    
 
-    
-    # Camera Parameters
-    focalLength = 700 # pixels
-    centerX = resolution[0]/2
-    centerY = resolution[1]/2# Camera Calibration Matrix
-    pxSize = 4e-6
-    
-    # read point cloud data as an array
-    pointList = convertXYZ(auxPackets)
-    pointList = np.asarray(pointList)
-    
-    # extract coordinates
-    xVals = np.round(pointList[:,0],2)
-    yVals = np.round(pointList[:,1],2) # switch z and y
-    zVals = np.round(pointList[:,2],2)
-    distVals = np.round(pointList[:,3],2)
-    
-    # remove distance values form point list
-    pointList = pointList[:,:3]
-    
-    # perform ransac on point cloud to predict ground plane equation
-    planeParameters = ransacPlane(pointList)
-    
-    # Use ground plane equation to overlay points over original points
-    zPlane = [0]*len(xVals)
-    for i in range(len(xVals)):
-        # Note B and C are switched
-        zPlane[i] = (-planeParameters[0][0]*xVals[i]-planeParameters[0][1]*
-              yVals[i] -planeParameters[1])/(planeParameters[0][2])
-    
-    ## find camera height (0,0,0)
-    cameraHeight = planeParameters[1]/np.linalg.norm(planeParameters[0])
-    #print("Camera Height: " + str(cameraHeight))
-    
-    
-    # Want ground plane to be on the actual ground in plot, rotate ground plane
-    groundDesired = np.array([0,0,1])   # desired ground plane normal
-    groundPlane =  planeParameters[0]/np.linalg.norm(planeParameters[0])
-    
-    # calculate axis and angle
-    axis,angle = axisAngle(groundDesired,groundPlane)
-    #print(np.sum(np.power(axis,2)))
-    #print(math.degrees(angle))
-    #print("roll axis")
-    #print(axis)
-    
-    # transform all points into desired location
-    zPlane1 = [0]*len(xVals)
-    xVals1 = [0]*len(xVals)
-    yVals1 = [0]*len(xVals)
-    zVals1 = [0]*len(xVals)
-    for i in range(len(xVals)):
-        realPoint = np.transpose(np.array([xVals[i],yVals[i],zVals[i]]))
-        planePoint = np.transpose(np.array([xVals[i],yVals[i],zPlane[i]]))
-       
-        
-        [xVals1[i],yVals1[i],zVals1[i]] = rotateAxisAngle(axis,angle,realPoint)
-        [xVals1[i],yVals1[i],zPlane1[i]] = rotateAxisAngle(axis,angle,planePoint)  
-    
-    # shift ground plane to be at z = 0
-    groundPlaneHeight = -np.mean(zPlane1)
-    zVals1 += groundPlaneHeight
-    zPlane1 += groundPlaneHeight
-    
-    
-    
-    # Collapse Feature Map to Image
-    scale = 10
-    xMin = int(math.floor(min(xVals1)*scale))
-    xMax = int(math.ceil(max(xVals1)*scale))
-    yMin = int(math.floor(min(yVals1)*scale))
-    yMax = int(math.ceil(max(yVals1)*scale))
-    xRange = xMax-xMin
-    yRange = yMax-yMin
-    
-    zMax = max(zVals1)
-    zThresh = zMax/10   # Keep heights greater than 10 % of max
-    
-    
-    cropImage = np.zeros((yRange+1,xRange+1)).astype('uint8')
-    for i in range(len(xVals)):
-        heightVal = zVals1[i]
-        if (heightVal > zThresh):
-            heightVal = 255
-        else:
-            heightVal = 0  
-        xCoor = int(xVals1[i]*scale)-xMin
-        yCoor = int(yVals1[i]*scale)-yMin
-        cropImage[yCoor,xCoor] = heightVal
-    
-    # create opencv compatible image
-    pil_image = Image.fromarray(cropImage)
-    pil_image = pil_image.convert('RGB')
-    opencvImage = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)    
-    
-    
-    # plot the ground plane
-    if showGroundPlane:
-        plotGroundPlane(xVals,yVals,zVals,zPlane)
-        plotGroundPlane(xVals1,yVals1,zVals1,zPlane1)
-    if showBinary:
-        cv2.namedWindow('image',cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('image', 600,600)
-        cv2.imshow('image',opencvImage)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        
-    
-# DEAPPRECIATED FUNCTION (USING DEPTH DATA INSTEAD of Bird's Eye View)
-def cameraNavigate():
-    # Find angle and axis of rotation between ground plane normal and camera axis
-    groundPlaneNormal = planeParameters[0]
+showGroundPlane = False
+showBinary = True
+
+
+# Camera Parameters
+focalLength = 700 # pixels
+centerX = resolution[0]/2
+centerY = resolution[1]/2# Camera Calibration Matrix
+pxSize = 4e-6
+
+# read point cloud data as an array
+pointList = convertXYZ(auxPackets)
+pointList = np.asarray(pointList)
+
+# extract coordinates
+xVals = np.round(pointList[:,0],2)
+yVals = np.round(pointList[:,1],2) # switch z and y
+zVals = np.round(pointList[:,2],2)
+distVals = np.round(pointList[:,3],2)
+
+# remove distance values form point list
+pointList = pointList[:,:3]
+
+# perform ransac on point cloud to predict ground plane equation
+planeParameters = ransacPlane(pointList)
+
+# Use ground plane equation to overlay points over original points
+zPlane = [0]*len(xVals)
+for i in range(len(xVals)):
+    # Note B and C are switched
+    zPlane[i] = (-planeParameters[0][0]*xVals[i]-planeParameters[0][1]*
+          yVals[i] -planeParameters[1])/(planeParameters[0][2])
+
+## find camera height (0,0,0)
+cameraHeight = planeParameters[1]/np.linalg.norm(planeParameters[0])
+#print("Camera Height: " + str(cameraHeight))
+
+
+# Want ground plane to be on the actual ground in plot, rotate ground plane
+groundDesired = np.array([0,0,1])   # desired ground plane normal
+groundPlane =  planeParameters[0]/np.linalg.norm(planeParameters[0])
+
+# calculate axis and angle
+axis,angle = axisAngle(groundDesired,groundPlane)
+#print(np.sum(np.power(axis,2)))
+#print(math.degrees(angle))
+#print("roll axis")
+#print(axis)
+
+# transform all points into desired location
+zPlane1 = [0]*len(xVals)
+xVals1 = [0]*len(xVals)
+yVals1 = [0]*len(xVals)
+zVals1 = [0]*len(xVals)
+for i in range(len(xVals)):
+    realPoint = np.transpose(np.array([xVals[i],yVals[i],zVals[i]]))
+    planePoint = np.transpose(np.array([xVals[i],yVals[i],zPlane[i]]))
    
-    # Get camera orientation
-    cameraPitch = cameraOrientation(clientID)
-    print("camera Pitch: " + str(cameraPitch))
     
-    cameraPitch = math.radians(cameraPitch)
-    # Construct camera direction vector
-    cameraVector = np.array([0,math.cos(cameraPitch),math.sin(cameraPitch)])
-    rollAxis = np.linalg.norm(np.cross(cameraVector,groundPlaneNormal))
-    rollAngle = (math.acos(cameraVector.dot(groundPlaneNormal)/(
-            np.linalg.norm(groundPlaneNormal)*np.linalg.norm(cameraVector))))
-    print("angle from camera to ground plane normal")
-    print(math.degrees(rollAngle))
-    
-    def nothing(x):
-        pass
-    
-    cv2.namedWindow('Colorbars')
-    cv2.createTrackbar('Angle','Colorbars',10,90,nothing)
-    cv2.createTrackbar('Depth','Colorbars',10,5000,nothing)
-    cv2.createTrackbar('FocalLength','Colorbars',700,1000,nothing)
-    cv2.createTrackbar('Scale','Colorbars',100,100,nothing)
-    cv2.createTrackbar('xScale','Colorbars',500,1000,nothing)
-    cv2.createTrackbar('yScale','Colorbars',500,1000,nothing)
+    [xVals1[i],yVals1[i],zVals1[i]] = rotateAxisAngle(axis,angle,realPoint)
+    [xVals1[i],yVals1[i],zPlane1[i]] = rotateAxisAngle(axis,angle,planePoint)  
 
-    # get original image
-    img = np.array(rgbImage,dtype=np.uint8)
-    img.resize([resolution[1],resolution[0],3])
-    img = cv2.flip(img,0)
-    cv2.imshow('Original',img)
-    cv2.waitKey(1)
+# shift ground plane to be at z = 0
+groundPlaneHeight = -np.mean(zPlane1)
+zVals1 += groundPlaneHeight
+zPlane1 += groundPlaneHeight
 
-    while(True):
-        # Create trackbars to be able to manually adjust parameters
-        angle = cv2.getTrackbarPos('Angle','Colorbars')
-        depth = cv2.getTrackbarPos('Depth','Colorbars')
-        focalLength =  cv2.getTrackbarPos('FocalLength','Colorbars')+1
-        scale = cv2.getTrackbarPos('Scale','Colorbars')/100
-        dx  = cv2.getTrackbarPos('xScale','Colorbars')-500
-        dy  = cv2.getTrackbarPos('yScale','Colorbars')-500
-    
-        rollAngle = math.radians(angle)
-        
-        # Camera Intrinsic and Rotation Matricies
-        K =  np.array([[focalLength, 0, centerX+dx],[0,focalLength,centerY+dy],[0,0,1]])
-        R = np.array([[1,0,0],[0,math.cos(rollAngle),-math.sin(rollAngle)],[
-                0,math.sin(rollAngle),math.cos(rollAngle)]])
-        H = K.dot(R).dot(np.linalg.inv(K))
-        
-        # find projected location of projected center
-        projectCenter = H.dot(np.array([[centerX],[centerY],[1]]))
-        [projectCenterX,projectCenterY, tmp ] = projectCenter
 
-        # Scaling Picture to fit window
-        scaleM = np.array([[scale,0,0],[0,scale,0],[0,0,1]])
-        H = scaleM.dot(H)
-        
-        # resize image into typical RGB image format
-        img = np.array(rgbImage,dtype=np.uint8)
-        img.resize([resolution[1],resolution[0],3])
-        img = cv2.flip(img,0)
-        
-        # transform image
-        groundImg = cv2.warpPerspective(img,H,(resolution[0],resolution[1]))
+
+
+# Collapse Feature Map to Image
+scale = 30
+xMin = int(math.floor(min(xVals1)*scale))
+xMax = int(math.ceil(max(xVals1)*scale))
+yMin = int(math.floor(min(yVals1)*scale))
+yMax = int(math.ceil(max(yVals1)*scale))
+xRange = xMax-xMin
+yRange = yMax-yMin
+
+# find pixel to distance scaling
+xMinReal = min(xVals1)
+xMaxReal = max(xVals1)
+yMinReal = min(yVals1)
+yMaxReal = max(yVals1)
+xRangeReal = xMaxReal-xMinReal
+yRangeReal = yMaxReal-yMinReal
+
+xPx2Dst = xRange/xRangeReal
+yPx2Dst = yRange/yRangeReal
+px2Dst = (xPx2Dst+yPx2Dst)/2
+#print(xRangeReal)
+
+zMax = max(zVals1)
+zThresh = zMax/10  # Keep heights greater than 10 % of max
+
+
+cropImage = np.zeros((yRange+1,xRange+1)).astype('uint8')
+for i in range(len(xVals)):
+    heightVal = zVals1[i]
+    if (heightVal > zThresh):
+        heightVal = 255
+    else:
+        heightVal = 0  
+    xCoor = int(xVals1[i]*scale)-xMin
+    yCoor = int(yVals1[i]*scale)-yMin
+    cropImage[yCoor,xCoor] = heightVal
+
+# create opencv compatible image
+pil_image = Image.fromarray(cropImage)
+pil_image = pil_image.convert('RGB')
+opencvImage = np.asarray(cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2GRAY))  
+
+
+# blur image
+filterSize = 3
+kernel = np.ones((filterSize,filterSize),np.float32)/filterSize**2
+opencvImage = cv2.filter2D(opencvImage,-1,kernel)
+
+# plot the ground plane
+if showGroundPlane:
+    plotGroundPlane(xVals,yVals,zVals,zPlane)
+    plotGroundPlane(xVals1,yVals1,zVals1,zPlane1)
+
+
+H,rhos,thetas = Hough.hough_lines_acc(opencvImage)
+
+Hough.plot_hough_acc(H)
+#peaks = Hough.hough_simple_peaks(H,6)   
+
+
+peaks1,H1 = Hough.hough_peaks(H,6,nhood_size=scale,)    
+peaks1 = Hough.correctLines(peaks1,px2Dst)
+Hough.hough_lines_draw(opencvImage,peaks1,rhos,thetas)
+
+
+# center of image
+
+
     
-        cv2.imshow('transformed',groundImg)
-        
-        key = cv2.waitKey(1)
-        if key == 27:
-            break
+
+
+
+
+
+if showBinary:
+    cv2.namedWindow('image',cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('image', 600,600)
+    cv2.imshow('image',opencvImage)
+    cv2.waitKey(0)
     cv2.destroyAllWindows()
+    cv2.imwrite('../reportImages/rowFeatureMapHoughNMS_Blur_Filtered.png',opencvImage)
+    
+    
+    
+    
+    
 
 
 
     
-if __name__ == '__main__':
-    main()
-
+#if __name__ == '__main__':
+#    main()
+#
 
 
 

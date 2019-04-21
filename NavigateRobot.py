@@ -132,18 +132,18 @@ def main():
     resolution, droneImage = getDroneImage(clientID,droneHeight) # get drone image
     droneImage = cv2.flip(droneImage,0) # flip image to match how its seen
     
-    # Select Farm Region
-    showImage = False
-    farm = ROI(droneImage, showImage)
+#    # Select Farm Region
+#    showImage = False
+#    farm = ROI(droneImage, showImage)
 #    if showImage:
 #        cv2.imshow("Farm Region",farm)
 #        cv2.waitKey(0)
 #        cv2.destroyAllWindows()
     
     # find lines in farm region
-    findlines(farm)
+#    findlines(farm)
        
-    return
+#    return
 
     # Set oringin as center of image
     centerX = resolution[0]/2
